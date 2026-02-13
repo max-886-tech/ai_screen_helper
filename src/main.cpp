@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <string>
 #include <ShlObj.h>   // SHGetFolderPathW
+
 #include "overlay.h"
 #include "capture.h"
 #include "uia_text.h"
@@ -18,13 +19,13 @@ static std::wstring GetPicturesPath() {
 }
 
 static bool RegisterBestHotkey() {
-  // Ensure message queue exists (helps avoid rare failures)
+  // Ensure message queue exists
   MSG qmsg{};
   PeekMessageW(&qmsg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 
   struct HK { UINT mod; UINT vk; };
   HK candidates[] = {
-    { MOD_CONTROL | MOD_SHIFT, 'X' }, // preferred
+    { MOD_CONTROL | MOD_SHIFT, 'X' },
     { MOD_CONTROL | MOD_ALT,   'X' },
     { MOD_CONTROL | MOD_SHIFT, 'Z' },
   };
@@ -66,7 +67,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       // 1) Capture active window
       HWND hwnd{};
       HBITMAP hbmp = CaptureForegroundWindowBitmap(hwnd);
-
       if (!hbmp) {
         overlay.SetText(L"❌ Failed to capture foreground window.");
         overlay.Show();
@@ -84,33 +84,34 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         continue;
       }
 
-      // 3) Extract text using UIA (fast path)
-      std::wstring extracted = ExtractTextFromWindowUIA(hwnd);
+      // 3) Try UIA extraction first
+      std::wstring uia = ExtractTextFromWindowUIA(hwnd);
 
-// Heuristic: if UIA text is too small, it's probably not useful (like Minimize/Close)
-bool uiaUseful = extracted.size() >= 200;
+      // If UIA is tiny, it's usually useless for VS Code / browsers
+      bool uiaUseful = (uia.size() >= 200);
 
-std::wstring finalText;
-if (uiaUseful) {
-  finalText = L"📄 Extracted text (UIA):\r\n\r\n" + TruncateForOverlay(extracted);
-} else {
-  std::wstring ocr = OcrImageFileWinRT(file);
-  if (ocr.empty()) {
-    finalText =
-      L"⚠️ UIA text not useful for this window.\r\n"
-      L"❌ OCR failed (WinRT).\r\n"
-      L"Next: ensure Windows language packs installed / try different capture mode.";
-  } else {
-    finalText = L"🔎 OCR text (WinRT):\r\n\r\n" + TruncateForOverlay(ocr);
-  }
-}
+      std::wstring content;
+      if (uiaUseful) {
+        content = L"📄 Extracted text (UIA):\r\n\r\n" + TruncateForOverlay(uia);
+      } else {
+        // 4) OCR fallback on the saved image
+        std::wstring ocr = OcrImageFileWinRT(file);
+        if (ocr.empty()) {
+          content =
+            L"⚠️ UIA text not useful for this window.\r\n"
+            L"❌ OCR failed (WinRT).\r\n"
+            L"Next: verify Windows OCR language packs / try different capture method.";
+        } else {
+          content = L"🔎 OCR text (WinRT):\r\n\r\n" + TruncateForOverlay(ocr);
+        }
+      }
 
-overlay.SetText(
-  L"✅ Captured active window and saved:\r\n" + file +
-  L"\r\n\r\n" + finalText
-);
-overlay.Show();
-
+      overlay.SetText(
+        L"✅ Captured active window and saved:\r\n" + file +
+        L"\r\n\r\n" + content
+      );
+      overlay.Show();
+    }
 
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
