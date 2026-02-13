@@ -10,6 +10,7 @@ add_executable(ai_screen_helper WIN32
   src/capture.cpp
   src/uia_text.cpp
   src/ocr_winrt.cpp
+  src/redact.cpp
 )
 
 target_include_directories(ai_screen_helper PRIVATE src)

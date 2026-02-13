@@ -7,6 +7,7 @@
 #include "capture.h"
 #include "uia_text.h"
 #include "ocr_winrt.h"
+#include "redact.h"
 
 static constexpr int HOTKEY_ID = 1;
 
@@ -38,9 +39,29 @@ static bool RegisterBestHotkey() {
   return false;
 }
 
-static std::wstring TruncateForOverlay(const std::wstring& s, size_t maxChars = 6000) {
+static std::wstring TruncateForOverlay(const std::wstring& s, size_t maxChars = 6500) {
   if (s.size() <= maxChars) return s;
   return s.substr(0, maxChars) + L"\r\n\r\n...[truncated]...";
+}
+
+// UIA in apps like VS Code often returns chrome/menu items, not editor/terminal text.
+// Detect that and prefer OCR.
+static bool LooksLikeChromeOnly(const std::wstring& t) {
+  if (t.size() < 200) return true;
+
+  const wchar_t* badTokens[] = {
+    L"Minimize", L"Restore", L"Close",
+    L"File", L"Edit", L"View", L"Help",
+    L"Toggle", L"Explorer", L"Extensions",
+    L"vscode-file://", L"Title actions", L"Side Bar",
+    L"Run and Debug", L"Source Control", L"Search (Ctrl+Shift+F)"
+  };
+
+  int hits = 0;
+  for (auto tok : badTokens) {
+    if (t.find(tok) != std::wstring::npos) hits++;
+  }
+  return hits >= 5;
 }
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
@@ -84,31 +105,40 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         continue;
       }
 
-      // 3) Try UIA extraction first
+      // 3) UIA first
       std::wstring uia = ExtractTextFromWindowUIA(hwnd);
 
-      // If UIA is tiny, it's usually useless for VS Code / browsers
-      bool uiaUseful = (uia.size() >= 200);
+      // 4) Decide: if UIA looks like chrome (menus/buttons) -> OCR
+      bool useOcr = uia.empty() || LooksLikeChromeOnly(uia);
 
-      std::wstring content;
-      if (uiaUseful) {
-        content = L"📄 Extracted text (UIA):\r\n\r\n" + TruncateForOverlay(uia);
+      std::wstring rawText;
+      std::wstring sourceLabel;
+
+      if (!useOcr) {
+        rawText = uia;
+        sourceLabel = L"📄 Extracted text (UIA)";
       } else {
-        // 4) OCR fallback on the saved image
         std::wstring ocr = OcrImageFileWinRT(file);
         if (ocr.empty()) {
-          content =
-            L"⚠️ UIA text not useful for this window.\r\n"
-            L"❌ OCR failed (WinRT).\r\n"
-            L"Next: verify Windows OCR language packs / try different capture method.";
-        } else {
-          content = L"🔎 OCR text (WinRT):\r\n\r\n" + TruncateForOverlay(ocr);
+          overlay.SetText(
+            L"✅ Saved screenshot:\r\n" + file +
+            L"\r\n\r\n⚠️ UIA not useful and OCR failed.\r\n"
+            L"Tip: install Windows language packs or try different capture/crop."
+          );
+          overlay.Show();
+          continue;
         }
+        rawText = ocr;
+        sourceLabel = L"🔎 OCR text (WinRT)";
       }
+
+      // 5) Redact secrets before showing/sending to AI
+      std::wstring safeText = RedactSecrets(rawText);
 
       overlay.SetText(
         L"✅ Captured active window and saved:\r\n" + file +
-        L"\r\n\r\n" + content
+        L"\r\n\r\n" + sourceLabel + L":\r\n\r\n" + TruncateForOverlay(safeText) +
+        L"\r\n\r\nNext: send this text to AI and show answer here."
       );
       overlay.Show();
     }
