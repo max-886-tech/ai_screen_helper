@@ -9,6 +9,7 @@ add_executable(ai_screen_helper WIN32
   src/overlay.cpp
   src/capture.cpp
   src/uia_text.cpp
+  src/ocr_winrt.cpp
 )
 
 target_include_directories(ai_screen_helper PRIVATE src)
@@ -21,4 +22,8 @@ target_link_libraries(ai_screen_helper PRIVATE
   windowscodecs
   ole32
   uiautomationcore
+  windowsapp
 )
+
+# Needed for C++/WinRT
+target_compile_options(ai_screen_helper PRIVATE /await)

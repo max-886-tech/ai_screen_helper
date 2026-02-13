@@ -5,6 +5,7 @@
 #include "overlay.h"
 #include "capture.h"
 #include "uia_text.h"
+#include "ocr_winrt.h"
 
 static constexpr int HOTKEY_ID = 1;
 
@@ -86,21 +87,30 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       // 3) Extract text using UIA (fast path)
       std::wstring extracted = ExtractTextFromWindowUIA(hwnd);
 
-      if (extracted.empty()) {
-        overlay.SetText(
-          L"✅ Captured active window and saved:\r\n" + file +
-          L"\r\n\r\n⚠️ UIA text not available (or too little) for this window."
-          L"\r\nNext: add OCR fallback (WinRT) to read text from the screenshot."
-        );
-      } else {
-        overlay.SetText(
-          L"✅ Captured active window and saved:\r\n" + file +
-          L"\r\n\r\n📄 Extracted text (UIA):\r\n\r\n" + TruncateForOverlay(extracted)
-        );
-      }
+// Heuristic: if UIA text is too small, it's probably not useful (like Minimize/Close)
+bool uiaUseful = extracted.size() >= 200;
 
-      overlay.Show();
-    }
+std::wstring finalText;
+if (uiaUseful) {
+  finalText = L"📄 Extracted text (UIA):\r\n\r\n" + TruncateForOverlay(extracted);
+} else {
+  std::wstring ocr = OcrImageFileWinRT(file);
+  if (ocr.empty()) {
+    finalText =
+      L"⚠️ UIA text not useful for this window.\r\n"
+      L"❌ OCR failed (WinRT).\r\n"
+      L"Next: ensure Windows language packs installed / try different capture mode.";
+  } else {
+    finalText = L"🔎 OCR text (WinRT):\r\n\r\n" + TruncateForOverlay(ocr);
+  }
+}
+
+overlay.SetText(
+  L"✅ Captured active window and saved:\r\n" + file +
+  L"\r\n\r\n" + finalText
+);
+overlay.Show();
+
 
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
