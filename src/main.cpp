@@ -4,6 +4,7 @@
 #include <ShlObj.h>   // SHGetFolderPathW
 #include "overlay.h"
 #include "capture.h"
+#include "uia_text.h"
 
 static constexpr int HOTKEY_ID = 1;
 
@@ -12,7 +13,6 @@ static std::wstring GetPicturesPath() {
   if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_MYPICTURES, nullptr, SHGFP_TYPE_CURRENT, path))) {
     return path;
   }
-  // fallback to current directory
   return L".";
 }
 
@@ -21,11 +21,11 @@ static bool RegisterBestHotkey() {
   MSG qmsg{};
   PeekMessageW(&qmsg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 
-  struct HK { UINT mod; UINT vk; const wchar_t* name; };
+  struct HK { UINT mod; UINT vk; };
   HK candidates[] = {
-    { MOD_CONTROL | MOD_SHIFT, 'X', L"Ctrl+Shift+X" }, // preferred
-    { MOD_CONTROL | MOD_ALT,   'X', L"Ctrl+Alt+X"   },
-    { MOD_CONTROL | MOD_SHIFT, 'Z', L"Ctrl+Shift+Z" },
+    { MOD_CONTROL | MOD_SHIFT, 'X' }, // preferred
+    { MOD_CONTROL | MOD_ALT,   'X' },
+    { MOD_CONTROL | MOD_SHIFT, 'Z' },
   };
 
   for (auto& hk : candidates) {
@@ -34,6 +34,11 @@ static bool RegisterBestHotkey() {
     }
   }
   return false;
+}
+
+static std::wstring TruncateForOverlay(const std::wstring& s, size_t maxChars = 6000) {
+  if (s.size() <= maxChars) return s;
+  return s.substr(0, maxChars) + L"\r\n\r\n...[truncated]...";
 }
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
@@ -51,12 +56,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     return 1;
   }
 
-  // Start hidden; show on hotkey
   overlay.Hide();
 
   MSG msg{};
   while (GetMessageW(&msg, nullptr, 0, 0)) {
     if (msg.message == WM_HOTKEY && msg.wParam == HOTKEY_ID) {
+
       // 1) Capture active window
       HWND hwnd{};
       HBITMAP hbmp = CaptureForegroundWindowBitmap(hwnd);
@@ -78,8 +83,22 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         continue;
       }
 
-      overlay.SetText(L"✅ Captured active window and saved:\r\n" + file +
-                      L"\r\n\r\nNext: Extract text (UIA/OCR) then call AI.");
+      // 3) Extract text using UIA (fast path)
+      std::wstring extracted = ExtractTextFromWindowUIA(hwnd);
+
+      if (extracted.empty()) {
+        overlay.SetText(
+          L"✅ Captured active window and saved:\r\n" + file +
+          L"\r\n\r\n⚠️ UIA text not available (or too little) for this window."
+          L"\r\nNext: add OCR fallback (WinRT) to read text from the screenshot."
+        );
+      } else {
+        overlay.SetText(
+          L"✅ Captured active window and saved:\r\n" + file +
+          L"\r\n\r\n📄 Extracted text (UIA):\r\n\r\n" + TruncateForOverlay(extracted)
+        );
+      }
+
       overlay.Show();
     }
 

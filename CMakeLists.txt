@@ -8,6 +8,7 @@ add_executable(ai_screen_helper WIN32
   src/main.cpp
   src/overlay.cpp
   src/capture.cpp
+  src/uia_text.cpp
 )
 
 target_include_directories(ai_screen_helper PRIVATE src)
@@ -18,4 +19,6 @@ target_link_libraries(ai_screen_helper PRIVATE
   gdi32
   comctl32
   windowscodecs
+  ole32
+  uiautomationcore
 )
